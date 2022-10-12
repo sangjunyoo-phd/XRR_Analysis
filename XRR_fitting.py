@@ -16,9 +16,10 @@ rcParams['mathtext.default'] = 'regular'
 plt.rcParams['xtick.direction'] = 'in'
 plt.rcParams['ytick.direction'] = 'in'
 from lmfit import minimize, Parameters, report_fit, Parameter
+from lmfit.printfuncs import fit_report
 
 class Layer:
-    def __init__(self, thickness, rho, sigma):
+    def __init__(self, thickness: Parameter, rho: Parameter, sigma: Parameter):
         self.thickness = thickness # Thickness of a slab
         self.rho = rho # Electron density of a slab
         self.sigma = sigma # Roughness of a slab (top: between i and i+1 layers)
@@ -57,7 +58,7 @@ class Model:
             # Superphase
             self.params[f'{par}{self.lkey[-1]}']=self.params[f'{par}{self.lkey[-2]}']
             # Added Layer
-            self.params.add(f'{par}{self.lkey[-2]}', value=layer_par[i], vary=True, min=0, max=np.inf)
+            self.params[f'{par}{self.lkey[-2]}']=layer_par[i]
         
     def edp(self):
         """
@@ -116,21 +117,21 @@ class Model:
     
     def fit(self, exp_data):
         """ Fit the Parameters with lmfit library"""
-        data=np.genfromtxt(exp_data)
+        data=np.genfromtxt('exp_data/'+exp_data)
         q = data[:,0]
         rrf_exp=data[:,1]
-        print(self.params.keys())
         
         def fcn2min(params, q, rrf_exp):
             return np.log10(self.rrf(params, q))-np.log10(rrf_exp)
         
         out = minimize(fcn2min, self.params, args=(q,), kws={'rrf_exp': rrf_exp})
         self.params = out.params
-        #print(out.params)
-        #print(self.params)
+        # Save parameters
+        with open(f'fitted_params/{exp_data.split(".")[0]}_fit_result.txt', 'w') as fh:
+            fh.write(fit_report(out))
         report_fit(out)
 
-    def plot(self, exp_data='None'):
+    def plot(self, exp_data=None):
         fig = plt.figure()
         fig_width = 3.25
         aspect_ratio = 1.9
@@ -143,7 +144,8 @@ class Model:
         ax1.set_xlim(left= min(self.edp()[0]),right= 1.05* max(self.edp()[0]))
         ax1.set_xlabel('z ($\AA$)')
         ax1.set_ylabel('Electron Density (e/$\AA^{3}$)')
-        ax1.plot(self.edp()[0], self.edp()[1], zorder=1, color='tab:blue')
+        ax1.axvspan(xmin=min(self.edp()[0]), xmax=0, ymin=0, ymax=1, color='tab:blue', alpha=0.2)
+        ax1.plot(self.edp()[0], self.edp()[1], zorder=1, color='tab:green')
         ax1.plot(self.stepedp()[:,0],self.stepedp()[:,1],
                  linestyle='--', linewidth=1, color='black',zorder=0)
         # Top: XRR experimental & fitted curve data
@@ -153,33 +155,42 @@ class Model:
         ax2.set_ylabel('$R/R_{F}$')
         
         q=np.linspace(0,0.8,500)
-        ax2.plot(q, self.rrf(self.params,q), color='k', linewidth=1.5, zorder=3)
-        if exp_data != 'None':
-            data=np.genfromtxt(exp_data)
+        ax2.plot(q, self.rrf(self.params,q), color='k', linewidth=1.5, zorder=3, label="Fitted Curve")
+        
+        if exp_data != None:
+            data=np.genfromtxt('exp_data/'+exp_data)
             ax2.errorbar(data[:,0],data[:,1],yerr=data[:,2], linewidth=0,
                          marker='o', markersize=5, markerfacecolor='None',
                          markeredgewidth=0.5, markeredgecolor='tab:red',
-                         elinewidth=1, capsize=1, color='tab:red')
+                         elinewidth=1, capsize=1, color='tab:red', label="Exp Data")
+            ax2.legend()
             
-        #Test!!!
-        #testdata = np.genfromtxt('test.dat')
-        #ax2.plot(testdata[:,0],testdata[:,1], color='tab:red',zorder=1)
-            
-    def savefig(self, name:str, exp_data='None'):
+    def savefig(self, exp_data):
         self.plot(exp_data)
-        plt.savefig(name+'.png', dpi=300)
+        plt.savefig(f'plot/{exp_data.split(".")[0]}_fit_result.png', dpi=300)
         
+if __name__ == '__main__':
+    # Define Layer objects with lmfit Parameter(name, value, vary, min, max, brute_step)
+    head = Layer(Parameter('thickness', value=4,   vary=True, min= 2.5,  max=6.0, brute_step=1.0),
+                 Parameter('rho',       value=0.7, vary=True, min= 0.35, max=1.5, brute_step=0.1),
+                 Parameter('sig',       value=3,   vary=True, min= 1.5,  max=5.0, brute_step=0.5))
+    tail = Layer(Parameter('thickness', value=20,  vary=True, min= 18,   max=21,  brute_step=1.0),
+                 Parameter('rho',       value=0.3, vary=True, min= 0.29, max=0.33,brute_step=0.1),
+                 Parameter('sig',       value=3,   vary=True, min= 1.5,  max=5.0, brute_step=0.5))
 
-head = Layer(4,0.7,3)
-tail = Layer(20,0.3,3)
-
-model = Model()
-model.add(head)
-model.add(tail)
-
-exp_data='Nd_pure_rrf.txt'
-model.fit(exp_data=exp_data)
-model.plot(exp_data=exp_data)
-
-#model.savefig('test', 'Nd_pure_rrf.txt')
+    # Add layers to the model with Model.add function
+    # Note: Add lower layer first (close to water)
+    model = Model()
+    model.add(head)
+    model.add(tail)
+    
+    # Put experiment data as a path + file name
+    exp_data='Nd_pure_rrf.txt'
+    model.fit(exp_data=exp_data)
+    model.plot(exp_data=exp_data)
+    
+    # Save fitting result as png
+    model.savefig(exp_data=exp_data)
+    
+    
 
